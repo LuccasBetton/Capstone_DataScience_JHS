@@ -1,0 +1,475 @@
+---
+title: "Data Science Capstone - Johns Hopkins - Milestone Week 2"
+author: "Luccas Betton"
+date: "2023-07-19"
+output: html_document
+---
+
+```{r setup, include=FALSE, cache=TRUE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+# 1. Summary
+
+This report presents the Data Science Capstone - Week 2 Milestone Report. The motivations for this report are:
+
+1.  Demonstrate the data was downloaded successfully.
+2.  Create a basic report of summary statistics about the data sets.
+3.  Report interesting findings.
+4.  Get feedback on project plans for creating a prediction algorithm and Shiny app.
+
+The criteria for report evaluation are:
+
+1.  Demonstrate that you've downloaded the data and have successfully loaded it in.
+2.  Create a basic report of summary statistics about the data sets.
+3.  Report any interesting findings that you amassed so far.
+4.  Get feedback on your plans for creating a prediction algorithm and Shiny app.
+
+# 2. Project Goals
+
+The main goal for this project is to create an application with smart predictive text model making easier to the user for typing and building texts, as we have in our mobile phone, e-mails, and so on.
+
+# 3. Upload Data
+
+Large databases comprising of text in a target language are commonly used when generating language models for various purposes. In this exercise, it is used the English database from different sources in order to predict the next word. The three data sources are: 
+
+-   Blogs
+-   News
+-   Twitter
+
+## 3.1 Library
+
+First of all, all libraries are necessary loaded.
+
+```{r,results='hide',message=FALSE}
+packages <- c("stringr","ggplot2", "dplyr", "tibble", "qdap", "tidytext", "wordcloud2","forcats","tidyr","htmlwidgets", "sweary","webshot") #list of all packages
+install.packages(setdiff(packages, rownames(installed.packages()))) #Install package if necessary
+lapply(packages, require, character.only = TRUE)
+```
+
+## 3.2 Data Download
+
+Download data from URl SwiftKey if files txt don't exists in the current working directory.
+
+```{r}
+#file path for the three data sources
+filepath_news <- "./final/en_US/en_US.news.txt"
+filepath_blogs <- "./final/en_US/en_US.blogs.txt"
+filepath_twitter <- "./final/en_US/en_US.twitter.txt"
+
+if(!(file.exists(filepath_news)*file.exists(filepath_blogs)*file.exists(filepath_twitter))){
+    if(!file.exists("./Coursera-SwiftKey.zip")){
+        fileURL <- "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
+        download.file(fileURL, destfile = "Coursera-SwiftKey.zip", method = "curl")
+    }
+    unzip("./Coursera-SwiftKey.zip")
+}
+```
+
+The txt files are read and stores in different variables. 
+
+```{r}
+Connec <- file(filepath_news,"rb")
+News_RD <- readLines(Connec, skipNul = TRUE) #Raw data for News data source
+close(Connec)
+
+Connec <- file(filepath_blogs,"r")
+Blog_RD <- readLines(Connec,skipNul = TRUE) #Raw data for Blog data source
+close(Connec)
+
+Connec <- file(filepath_twitter,"rb")
+Twitter_RD <- readLines(Connec, skipNul = TRUE) #Raw data for Twitter data source
+close(Connec)
+```
+
+```{r eval=FALSE, include=FALSE}
+rm(Connec,filepath_news,filepath_blogs,filepath_twitter)
+```
+
+## 4 Sample Data
+
+Since the files have a great amount of data, we sampled randomly 10% for News and for Blogs Data, and 2.5% for Twitter data. The sampling percentage for Twitter was lower because probably this source it will present much more slang, bad words, misspelling and so on.  
+
+```{r, cache=T}
+set.seed(1990)
+sample_factors = c(0.1,0.1,0.025)
+News_RD_Spl <- News_RD[sample(1:length(News_RD),sample_factors[1]*length(News_RD))] #Sample Data from News Data
+Blog_RD_Spl <- Blog_RD[sample(1:length(Blog_RD),sample_factors[2]*length(Blog_RD))] #Sample Data from Blog Data
+Twitter_RD_Spl <- Twitter_RD[sample(1:length(Twitter_RD),sample_factors[3]*length(Twitter_RD))] #Sample Data from Twitter Data
+
+#Combine sampled data
+RD_Spl <- c(News_RD_Spl,Blog_RD_Spl,Twitter_RD_Spl) #Sampled Raw Data
+
+#Storage Raw Data Sampled  
+write.table(RD_Spl, file =  "./RawData_Sample.txt", quote = FALSE, sep = "", row.names = FALSE, col.names = FALSE)
+```
+
+```{r eval=FALSE, include=FALSE}
+rm(News_RD,Blog_RD,Twitter_RD)
+```
+
+# 5 Cleaning Data
+
+The cleaning process was performed doing the following steps:
+
+* Transform characters in lowercase 
+* Remove URL strings
+* Remove Non Ascii characters
+* Remove punctuation, expect for apostrophe 
+* Filter out texts with less than 4 words
+
+```{r}
+TD_Spl <- RD_Spl #Copy Raw Data to start cleaning process 
+TD_Spl <- tolower(TD_Spl) #Transform all characters in lowercase
+TD_Spl <- rm_url(TD_Spl) #Remove URL strings
+TD_Spl <- rm_non_ascii(TD_Spl) #Remove non ASCII words
+TD_Spl <- gsub(".*?($|'|[^[:punct:]]).*?","\\1", TD_Spl) #Remove punctuation expect for apostrophe
+TD_Spl <- TD_Spl[which(str_count(TD_Spl,'\\W+')>=4)] #Filter out texts with less than 4 words
+
+TD_Spl_DF <- tibble(Text = TD_Spl) #Tranform Data for dataframe
+```
+
+Other cleaning processes were performed when the data was tokenized, that were:
+
+* Remove stop words 
+* Remove profanity
+* Remove numbers
+
+It was used the databases for stop_word from tidytext library and swear_words from sweary for removing stop words and profanity, respectively.
+
+```{r}
+data("stop_words")
+data("swear_words")
+swear_words = filter(swear_words,language == "en") #Filter only for English swear words
+```
+
+## 6. N-Grams
+
+### 6.1 Unigrams
+
+For unigrams it was evaluated the words frequency without filtering stop words and also with stop words.
+
+```{r}
+TD_1gram <- unnest_tokens(TD_Spl_DF, Gram, input = Text, token = "ngrams", n = 1) #Unigram data frame
+TD_1gram <- filter(TD_1gram,!str_detect(Gram, "\\d+")) # filter out numbers
+TD_1gram <- anti_join(TD_1gram,swear_words, join_by(Gram == word)) # Filter out bad words
+
+TD_1gram_Full <- TD_1gram #data frame with stop words
+save(TD_1gram_Full,file="TD_1gram_Full.Rda") #Save data frame with unigrams with stop words
+
+TD_1gram_WoutSw <- anti_join(TD_1gram,stop_words, join_by(Gram == word)) #data frame without stop words
+save(TD_1gram_WoutSw,file="TD_1gram_WoutSw.Rda") #Save data frame with unigrams without stop words
+```
+
+Next, calculated quantity and frequency for each word.
+
+```{r}
+WordCnt_1gram_Full <- TD_1gram_Full %>%
+  group_by_all() %>%
+  count() #Group and count duplicate words  
+WordCnt_1gram_Full <- WordCnt_1gram_Full %>% arrange(desc(n)) #Order
+WordCnt_1gram_Full$freq <- WordCnt_1gram_Full$n*100/sum(WordCnt_1gram_Full$n)
+WordCnt_1gram_Full$cumfreq <- cumsum(WordCnt_1gram_Full$freq)
+save(WordCnt_1gram_Full,file="WordCnt_1gram_Full.Rda") #Save data frame with unigrams qty and freq
+
+WordCnt_1gram_WoutSw <- TD_1gram_WoutSw %>%
+  group_by_all() %>%
+  count()
+WordCnt_1gram_WoutSw <- WordCnt_1gram_WoutSw %>% arrange(desc(n))
+WordCnt_1gram_WoutSw$freq <- with(WordCnt_1gram_WoutSw,WordCnt_1gram_WoutSw$n*100/sum(WordCnt_1gram_WoutSw$n))
+save(WordCnt_1gram_WoutSw,file="WordCnt_1gram_WoutSw.Rda") #Save data frame with unigrams qty and freq
+```
+
+### 6.2 Bigram
+
+As for unigrams, it was evaluated the words frequency without filtering stop words and also with stop words.
+
+```{r, cache=TRUE}
+TD_2gram <- unnest_tokens(TD_Spl_DF, Gram, input = Text, token = "ngrams", n = 2)
+TD_2gram <- filter(TD_2gram,!str_detect(Gram, "\\d+")) #Filter out numbers 
+TD_2gram <- separate(TD_2gram,Gram,c("Gram1", "Gram2"),sep = " ") # Split in two Grams
+TD_2gram <- TD_2gram %>% filter(!(Gram1 %in% swear_words$word | Gram2 %in% swear_words$word)) #Filter out bad words
+save(TD_2gram,file="TD_2gram.Rda")
+
+WordCnt_2gram <- TD_2gram %>%
+  group_by_all() %>%
+  count()
+WordCnt_2gram <- WordCnt_2gram %>% arrange(desc(n))
+WordCnt_2gram$freq <- WordCnt_2gram$n*100/sum(WordCnt_2gram$n)
+WordCnt_2gram$cumfreq <- cumsum(WordCnt_2gram$freq)
+#nrow(filter(WordCnt_2gram,n>1))/nrow(WordCnt_2gram)*100 #Observations with more than one appearence
+#nrow(filter(WordCnt_2gram,cumfreq<=50))/nrow(WordCnt_2gram)*100
+save(WordCnt_2gram,file="WordCnt_2gram.Rda")
+#load(file='WordCnt_2gram.Rda')
+
+#TD_2gram Without any stop words
+TD_2gram_WoutSw <- TD_2gram %>% 
+  filter(!Gram1 %in% stop_words$word) %>%
+  filter(!Gram2 %in% stop_words$word)
+save(TD_2gram_WoutSw,file="TD_2gram_WoutSw.Rda")
+#load(file='TD_2gram_Spl_FullFilt.Rda')
+WordCnt_2gram_WoutSw <- TD_2gram_WoutSw %>%
+  group_by_all() %>%
+  count()
+WordCnt_2gram_WoutSw <- WordCnt_2gram_WoutSw %>% arrange(desc(n))
+WordCnt_2gram_WoutSw$freq <- with(WordCnt_2gram_WoutSw,WordCnt_2gram_WoutSw$n*100/sum(WordCnt_2gram_WoutSw$n))
+WordCnt_2gram_WoutSw$cumfreq <- cumsum(WordCnt_2gram_WoutSw$freq)
+save(WordCnt_2gram_WoutSw,file="WordCnt_2gram_WoutSw.Rda")
+#load(file='WordCnt_2gram_WoutSw.Rda')
+```
+
+### 6.3 Trigram
+
+Trigrams it was only applied filtering for stop words when all the words were stop words.
+
+```{r}
+TD_3gram <- unnest_tokens(TD_Spl_DF, Gram, input = Text, token = "ngrams", n = 3)
+TD_3gram <- filter(TD_3gram,!str_detect(Gram, "\\d+"))
+TD_3gram <- TD_3gram %>% separate(Gram,c("Gram1", "Gram2","Gram3"),sep = " ")
+TD_3gram <- TD_3gram %>% filter(!(Gram1 %in% swear_words$word | Gram2 %in% swear_words$word | Gram3 %in% swear_words$word)) #Filtered when all words are stopwords
+TD_3gram <- TD_3gram %>% filter(!(Gram1 %in% stop_words$word & Gram2 %in% stop_words$word & Gram3 %in% stop_words$word))  #Filter bad words
+save(TD_3gram,file="TD_3gram.Rda")
+
+WordCnt_3gram <- TD_3gram %>%
+  group_by_all() %>%
+  count()
+WordCnt_3gram <- WordCnt_3gram %>% arrange(desc(n))
+WordCnt_3gram$freq <- WordCnt_3gram$n*100/sum(WordCnt_3gram$n)
+WordCnt_3gram$cumfreq <- cumsum(WordCnt_3gram$freq)
+save(WordCnt_3gram,file="WordCnt_3gram.Rda")
+#load(file='WordCnt_3gram.Rda')
+```
+
+### 6.4 Quadrigram
+
+Quadrigram it was only applied filtering for stop words when all the words were stop words.
+
+```{r}
+TD_4gram <- unnest_tokens(TD_Spl_DF, Gram, input = Text, token = "ngrams", n = 4)
+TD_4gram <- filter(TD_4gram,!str_detect(Gram, "\\d+"))
+TD_4gram <- TD_4gram %>% separate(Gram,c("Gram1", "Gram2","Gram3","Gram4"),sep = " ")
+TD_4gram <- TD_4gram %>% filter(!(Gram1 %in% swear_words$word | Gram2 %in% swear_words$word | Gram3 %in% swear_words$word | Gram4 %in% swear_words$word)) #Filtered when any word are badword
+TD_4gram <- TD_4gram %>% filter(!(Gram1 %in% stop_words$word & Gram2 %in% stop_words$word & Gram3 %in% stop_words$word & Gram4 %in% stop_words$word))  #Filter if all words are stop words
+save(TD_4gram,file="TD_4gram.Rda")
+
+WordCnt_4gram <- TD_4gram %>%
+  group_by_all() %>%
+  count()
+WordCnt_4gram <- WordCnt_4gram %>% arrange(desc(n))
+WordCnt_4gram$freq <- with(WordCnt_4gram,WordCnt_4gram$n*100/sum(WordCnt_4gram$n))
+WordCnt_4gram$cumfreq <- cumsum(WordCnt_4gram$freq)
+#nrow(filter(WordCnt_4gram,n>1))/nrow(WordCnt_4gram)*100 #Observations with more than one appearence
+#nrow(filter(WordCnt_4gram,cumfreq<=50))/nrow(WordCnt_4gram)*100
+save(WordCnt_4gram,file="WordCnt_4gram.Rda")
+```
+
+# 4. Exploratory Analysis
+
+## 4.1 DataBase Structure
+
+Summary table for each file - Blog, News and Twitter. It was calculated amount of texts (observations) per data source, quantity of words and characters per text, and their averages per data source. 
+
+```{r, cache=T}
+Source_Data <- c("Blogs","News","Twitter") #Source of data 
+Sizes_Data <- c(length(Blog_RD),length(News_RD),length(Twitter_RD )) #Texts per data source 
+Word_Data <- c(sum(str_count(Blog_RD,'\\W+')),sum(str_count(News_RD,'\\W+')),sum(str_count(Twitter_RD ,'\\W+'))) #Qty of words per source of data 
+Char_Data <- c(sum(nchar(Blog_RD)),sum(nchar(News_RD)),sum(nchar(Twitter_RD ))) #Qty  of characters per data source
+
+Summary_Table <- data.frame(Source_Data,Sizes_Data,Word_Data,Char_Data,round(Word_Data/Sizes_Data),round(Char_Data/Sizes_Data))
+colnames(Summary_Table) <- c("Data Source", "Lines","Words",'Characters',"Avg Word per line","Avg Char per line")
+```
+
+As it was expected Blogs and News are texts much higher than Twitter. It is known that Twitter has limitation of characters per post, but the summary table shows that this platform is used for smaller text, average around 70 characters, far from the limits, in the past 140 characters and now 280 characters.
+
+```{r}
+Summary_Table
+```
+
+```{r eval=FALSE, include=FALSE}
+rm(Summary_Table,Char_Data,Sizes_Data, Source_Data,Word_Data)
+```
+
+Quantity of words per text for each data source shows also the tendency related before.
+
+```{r, cache=T, warning=FALSE}
+#Frequency data_Frame words per line
+FreqWord_News_Spl <- data.frame(str_count(News_RD_Spl,'\\W+'),factor("News"))
+colnames(FreqWord_News_Spl) <- c("Words","Data_Source")
+
+FreqWord_Blog_Spl <- data.frame(str_count(Blog_RD_Spl,'\\W+'),factor("Blog"))
+colnames(FreqWord_Blog_Spl) <- c("Words","Data_Source")
+
+FreqWord_Twitter_Spl <- data.frame(str_count(Twitter_RD_Spl,'\\W+'),factor("Twitter"))
+colnames(FreqWord_Twitter_Spl) <- c("Words","Data_Source")
+
+FreqWord_Spl <- bind_rows(FreqWord_News_Spl, FreqWord_Blog_Spl ,FreqWord_Twitter_Spl)
+
+ggplot(FreqWord_Spl,aes(x=Words, color=Data_Source))+geom_histogram(binwidth = 5, fill = "white", alpha = 0.5, position = 'identity')+xlim(0,150)+facet_wrap(.~Data_Source)+xlab("Words per Text")+ylab("")
+```
+
+```{r eval=FALSE, include=FALSE}
+rm(Blog_RD_Spl,News_RD_Spl,Twitter_RD_Spl)
+```
+
+## 4.2 Unigrams
+
+Unigrams data frame with stop words as it was expected presented a majority of stop words in the top 50 words observed.
+
+```{r,message=FALSE}
+max_plot <- 50
+plot_df <- WordCnt_1gram_Full[1:max_plot,]
+ggplot(WordCnt_1gram_Full[1:max_plot,],aes(x = freq, y = fct_reorder(Gram,freq)))+geom_col()+xlab("Frequency")+ylab("Word")+ggtitle("Unigram - Frequency - With Stop Words")
+ggsave("Colunms_1gram_Full.png",plot = last_plot())
+```
+
+Unigrams data frame without stopwords. The most frequent words were "time", "people", "day" and "love".
+
+```{r}
+max_plot <- 50
+ggplot(WordCnt_1gram_WoutSw[1:max_plot,],aes(x = freq, y = fct_reorder(Gram,freq)))+geom_col()+xlab("Frequency")+ylab("Word")+ggtitle("Unigram - Frequency - Without Stop Words")
+ggsave("Colunms_1gram_WoutStopWord.png",plot = last_plot())
+```
+
+Words Clouds for Unigrams with stop words.
+
+```{r}
+max_cloud <- 50
+wd_cloud1gram <- wordcloud2(WordCnt_1gram_Full[1:max_cloud,], color = 'random-dark', size = 1)
+saveWidget(wd_cloud1gram,"wordcloud_1gram_Full.html",selfcontained = F)
+webshot("wordcloud_1gram_Full.html","wordcloud_1gram_Full.png", delay =5, vwidth = 500, vheight=500) # changed to png 
+```
+
+Words Clouds for Unigrams without stop words.
+
+```{r}
+max_cloud <- 100
+wd_cloud1gram_WoutSw <- wordcloud2(WordCnt_1gram_WoutSw[1:max_cloud,], color = 'random-dark', size = 1)
+saveWidget(wd_cloud1gram_WoutSw,"wordcloud_1gram_WoutSw.html",selfcontained = F)
+webshot("wordcloud_1gram_WoutSw.html","wordcloud_1gram_WoutSw.png", delay =5, vwidth = 1000, vheight=1000) # changed to png 
+```
+
+## 4.3 Bigrams
+
+As in the unigrams the bigrams data with stop words presented mainly only stop words.  
+
+```{r}
+max_plot <- 50
+plot_df <- WordCnt_2gram[1:max_plot,]
+plot_df <- plot_df %>% unite(Gram, c("Gram1", "Gram2"),sep = " ")
+ggplot(mutate(plot_df,Gram = reorder(Gram,n)),aes(x = freq, y = Gram))+geom_col()+xlab("Frequency")+ylab("Word")+ggtitle("Bigram - Frequency")
+ggsave("Columns_Bigram.png",plot = last_plot())
+```
+
+The bigrams without stop words presented some US cities as "New York", "Saint Louis", "New Jersey", etc., and other adverbial phrase such as "last year", "right now", etc. 
+
+```{r}
+max_plot <- 50
+plot_df <- WordCnt_2gram_WoutSw[1:max_plot,]
+plot_df <- plot_df %>% unite(Gram, c("Gram1", "Gram2"),sep = " ")
+ggplot(mutate(plot_df,Gram = reorder(Gram,n)),aes(x = freq, y = Gram))+geom_col()+xlab("Frequency")+ylab("Word")+ggtitle("Bigram - Frequency - Full Filtered")
+```
+
+Wordcloud for bigrams with stop words.
+
+```{r}
+max_cloud <- 50
+plot_cloud_df <- WordCnt_2gram[1:max_cloud,]
+plot_cloud_df <- plot_cloud_df %>% unite(Gram, c("Gram1", "Gram2"),sep = " ")
+wd_cloud2gram <- wordcloud2(plot_cloud_df, color = 'random-dark', size = 1)
+#wd_cloud2gram
+saveWidget(wd_cloud2gram,"wordcloud_2gram.html",selfcontained = F)
+webshot("wordcloud_2gram.html","wordcloud_2gram.png", delay =5, vwidth = 480, vheight=480)
+```
+
+Wordcloud for bigrams without stop words.
+
+```{r}
+max_cloud <- 50
+plot_cloud_df <- WordCnt_2gram_WoutSw[1:max_cloud,]
+plot_cloud_df <- plot_cloud_df %>% unite(Gram, c("Gram1", "Gram2"),sep = " ")
+wd_cloud2gram <- wordcloud2(plot_cloud_df, color = 'random-dark', size = 0.75)
+#wd_cloud2gram
+saveWidget(wd_cloud2gram,"wordcloud_2gram.html",selfcontained = F)
+webshot("wordcloud_2gram.html","wordcloud_2gram.png", delay =5, vwidth = 480, vheight=480)
+```
+
+## 4.4 Trigram
+
+Trigrams with more appearance.
+
+```{r}
+max_plot <- 50
+plot_df <- WordCnt_3gram[1:max_plot,]
+plot_df <- plot_df %>% unite(Gram, c("Gram1", "Gram2","Gram3"),sep = " ")
+ggplot(mutate(plot_df,Gram = reorder(Gram,n)),aes(x = freq, y = Gram))+geom_col()+xlab("Frequency")+ylab("Word")+ggtitle("Trigram - Frequency")
+ggsave("Columns_Trigram.png",plot = last_plot())
+```
+
+Word cloud for trigram.
+
+```{r}
+max_cloud <- 100
+plot_cloud_df <- WordCnt_3gram[1:max_cloud,]
+plot_cloud_df <- plot_cloud_df %>% unite(Gram, c("Gram1", "Gram2","Gram3"),sep = " ")
+wd_cloud3gram <- wordcloud2(plot_cloud_df, color = 'random-dark', size = 0.5)
+#wd_cloud3gram
+saveWidget(wd_cloud3gram,"wordcloud_3gram.html",selfcontained = F)
+webshot("wordcloud_3gram.html","wordcloud_3gram.png", delay =5, vwidth = 480, vheight=480)
+```
+
+## 4.5 Quadrigram
+
+Quadrigram with more appearance.
+
+```{r}
+max_plot <- 50
+plot_df <- WordCnt_4gram[1:max_plot,]
+plot_df <- plot_df %>% unite(Gram, c("Gram1", "Gram2","Gram3","Gram4"),sep = " ")
+ggplot(mutate(plot_df,Gram = reorder(Gram,n)),aes(x = freq, y = Gram))+geom_col()+xlab("Frequency")+ylab("Word")+ggtitle("Quadrigram - Frequency")
+ggsave("Columns_Quadrigram.png",plot = last_plot())
+```
+
+Word cloud for quadrigram.
+
+```{r}
+max_cloud <- 50
+plot_cloud_df <- WordCnt_4gram[1:max_cloud,]
+plot_cloud_df <- plot_cloud_df %>% unite(Gram, c("Gram1", "Gram2","Gram3","Gram4"),sep = " ")
+wd_cloud4gram <- wordcloud2(plot_cloud_df, color = 'random-dark', size = 0.5)
+saveWidget(wd_cloud4gram,"wordcloud_4gram.html",selfcontained = F)
+webshot("wordcloud_4gram.html","wordcloud_4gram.png", delay =5, vwidth = 480, vheight=480)
+```
+
+## 4.6 Summary N-Grams
+
+The following table shows the total amount of grams, % of grams with more than one appearance and % of grams that cover 50% of words. 
+
+```{r}
+NGram_length <- c(length(WordCnt_1gram_Full$n),length(WordCnt_2gram$n),length(WordCnt_3gram$n),length(WordCnt_4gram$n))
+Words_1app <- c(nrow(filter(WordCnt_1gram_Full,n>1))/nrow(WordCnt_1gram_Full)*100)
+Words_50freq <- c(nrow(filter(WordCnt_1gram_Full,cumfreq<=50))/nrow(WordCnt_1gram_Full)*100)
+Words_1app <- c(Words_1app,nrow(filter(WordCnt_2gram,n>1))/nrow(WordCnt_2gram)*100)
+Words_50freq <- c(Words_50freq,nrow(filter(WordCnt_2gram,cumfreq<=50))/nrow(WordCnt_2gram)*100)
+Words_1app <- c(Words_1app,nrow(filter(WordCnt_3gram,n>1))/nrow(WordCnt_3gram)*100)
+Words_50freq <- c(Words_50freq,nrow(filter(WordCnt_3gram,cumfreq<=50))/nrow(WordCnt_3gram)*100)
+Words_1app <- c(Words_1app,nrow(filter(WordCnt_4gram,n>1))/nrow(WordCnt_4gram)*100)
+Words_50freq <- c(Words_50freq,nrow(filter(WordCnt_4gram,cumfreq<=50))/nrow(WordCnt_4gram)*100)
+
+Gram_List <- c("Unigram","Bigram","Trigram","Quadrigram") #Source of data 
+SumGram_Table <- data.frame(Gram_List,NGram_length,round(Words_1app,1),round(Words_50freq,1))
+colnames(SumGram_Table) <- c("N-Gram", "Total Qty Grams",  "% Gram More One app","% of Grams cover 50%")
+```
+
+Interesting to see that even for unigrams only 46% appears more than one time in all data sampled, and this reduces for the other grams. Also, only 2% of bigrams cover 50% of all the bigrams found. 
+
+```{r}
+SumGram_Table
+```
+
+# 5. Conclusions
+
+All the criteria for this project was fulfilled as it was reported the data download, data cleaning, and exploratory analysis. 
+
+For the next steps,the prediction algorithm will  evaluate the most frequent phrase constructions based on the user inputs. First, it will evaluate quadrigrams, trigrams, bigrams and finnaly the most common words in the unigram.
+
+One concern is the processing time to look for matching grams in each data frame of n-grams. Probably, it will be necessary to simplify this data in order to achieve a better user experience, maybe reducing the size of data frames only for grams that appear more than one time.   
